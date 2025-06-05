@@ -1,0 +1,121 @@
+# Python/Django General
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+*.egg/
+*.whl
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+*.pid
+*.seed
+*.db
+*.sqlite3
+db.sqlite3
+migrations/
+
+# Django Specific
+*.log
+local_settings.py
+settings_local.py
+*.env
+.env
+.env.*
+!.env.example  # Keep example env file if you have one
+media/         # User-uploaded files (unless you want to version them)
+staticfiles/   # Collected static files
+*.bak
+
+# PWA/Service Worker Specific
+*.service_worker.js        # Generated Service Worker files (if any)
+node_modules/  # If you use Node.js for frontend tooling
+package-lock.json
+yarn.lock
+dist/          # Frontend build output
+*.map          # Source maps
+
+# Virtual Environments
+venv/
+virtualenv/
+.venv/
+
+# IDEs and Editors
+*.idea/        # IntelliJ/PyCharm
+*.iml
+.vscode/       # Visual Studio Code
+*.sublime-*    # Sublime Text
+*.code-workspace
+.DS_Store      # macOS Finder metadata
+*.swp          # Vim swap files
+*.swo
+*.swn
+
+# Operating System Files
+Thumbs.db      # Windows thumbnail cache
+ehthumbs.db
+Desktop.ini
+
+# Testing/CI
+htmlcov/
+.pytest_cache/
+coverage/
+.junit/
+*.xml          # Test output files
+*.lcov
+
+# Dependency Management
+Pipfile.lock   # If using Pipenv
+poetry.lock    # If using Poetry
+
+# Documentation
+docs/_build/
+*.md.bak
+
+# Miscellaneous
+*.bak
+*.tmp
+*.temp
+*.cache
+*.prof        # Profiling output
+*.dump
+*.sql         # Database dumps
+*.zip
+*.tar.gz
+*.tgz
+
+# Sensitive Data
+secrets/
+credentials/
+*.key
+*.pem
+*.crt
+*.cert
+*.json        # If it might contain secrets (e.g., API keys)
+
+# Project-Specific Exclusions (Customize as Needed)
+*.old
+*.backup
+*.retry
+debug.log
