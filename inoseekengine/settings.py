@@ -49,7 +49,7 @@ SECRET_KEY = 'django-insecure-#ev&v*lf)olov#gun%8^$@yrqpd5k@7m@ao&!@x$3e&v3o7f@2
 DEBUG = True
 
 ALLOWED_HOSTS = [
-    "1a09-197-232-62-198.ngrok-free.app",
+    "inoseekengine.onrender.com",
 ]
 
 
