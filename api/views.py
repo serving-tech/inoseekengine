@@ -19,7 +19,6 @@ import sib_api_v3_sdk
 from sib_api_v3_sdk.rest import ApiException
 from django.conf import settings
 import logging
-from django_ratelimit.decorators import ratelimit
 
 # Initialize logger
 logger = logging.getLogger(__name__)
