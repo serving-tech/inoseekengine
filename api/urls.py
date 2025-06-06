@@ -5,12 +5,13 @@ from .views import (
     RegisterAPIView, VerifyOTPAPIView, SetPasswordAPIView, LoginAPIView,
     UserProfileAPIView, UserProfileUpdateAPIView, CarListCreateAPIView,
     CarToggleAPIView, CarDeleteAPIView, ParkingTransactionListAPIView,
-    PaymentTransactionListAPIView, TopUpAPIView, CheckNumberPlate, ExitVehicle
+    PaymentTransactionListAPIView, TopUpAPIView, CheckNumberPlate, ExitVehicle, ResendOTPAPIView
 )
 
 urlpatterns = [
     path('register/', RegisterAPIView.as_view(), name='register'),
     path('verify-otp/', VerifyOTPAPIView.as_view(), name='verify-otp'),
+    path('resend-otp/',ResendOTPAPIView.as_view(), name='resend-otp'),
     path('set-password/', SetPasswordAPIView.as_view(), name='set-password'),
     path('login/', LoginAPIView.as_view(), name='login'),
     path('profile/', UserProfileAPIView.as_view(), name='profile'),

@@ -1,3 +1,4 @@
+from django.contrib.auth import get_user_model
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -17,11 +18,18 @@ import string
 import sib_api_v3_sdk
 from sib_api_v3_sdk.rest import ApiException
 from django.conf import settings
+import logging
+from django_ratelimit.decorators import ratelimit
 
-# Initialize Brevo API client
+# Initialize logger
+logger = logging.getLogger(__name__)
+
+# Initialize Brevo API client (moved outside class)
 configuration = sib_api_v3_sdk.Configuration()
 configuration.api_key['api-key'] = settings.BREVO_API_KEY
 brevo_api_instance = sib_api_v3_sdk.TransactionalEmailsApi(sib_api_v3_sdk.ApiClient(configuration))
+
+User = get_user_model()
 
 class RegisterAPIView(APIView):
     permission_classes = [AllowAny]
@@ -31,6 +39,8 @@ class RegisterAPIView(APIView):
         email = request.data.get('email')
         phone_number = request.data.get('phone_number')
         password = request.data.get('password')
+
+        logger.info(f"Registering user - email: {email}, phone: {phone_number}")
 
         if not all([name, email, phone_number, password]):
             return Response(
@@ -44,45 +54,50 @@ class RegisterAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        if User.objects.filter(phone_number=phone_number).exists():
+            return Response(
+                {'status': 'error', 'message': 'Phone number already exists'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         try:
-            user = User(
+            user = User.objects.create_user(
                 email=email,
                 name=name,
                 phone_number=phone_number,
-                password_hash=make_password(password),
-                balance=0.0,
-                is_email_verified=False,
-                otp=''.join(random.choices(string.digits, k=6)),
-                otp_created_at=timezone.now()
+                password=password,
             )
+            otp = ''.join(random.choices(string.digits, k=6))
+            user.set_otp(otp)  # Use set_otp to hash and set OTP
             user.save()
 
-            print(f"Generated OTP for {email}: {user.otp}")  # Debug log
+            logger.info(f"Generated OTP for {email}: {otp}")
 
-            # Send OTP email via Brevo
             try:
                 send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(
                     to=[{"email": email, "name": name}],
-                    sender={"email": settings.BREVO_SENDER_EMAIL, "name": "Your Website Team"},
+                    sender={"email": settings.BREVO_SENDER_EMAIL, "name": "inoseek Team"},
                     template_id=settings.BREVO_OTP_TEMPLATE_ID,
-                    params={"FIRSTNAME": name, "OTP_CODE": user.otp}
+                    params={"FIRSTNAME": name, "OTP_CODE": otp}
                 )
                 brevo_api_instance.send_transac_email(send_smtp_email)
-                print(f"OTP email sent to {email}")  # Debug log
+                logger.info(f"OTP email sent to {email}")
             except ApiException as e:
-                print(f"Error sending OTP email: {str(e)}")  # Log error but don’t block registration
+                logger.error(f"Error sending OTP email: {str(e)}, Status: {e.status}, Body: {e.body}")
+                user.delete()
                 return Response(
-                    {'status': 'success', 'message': 'Registration successful, OTP email failed to send. Please resend OTP.', 'user_id': user.id},
-                    status=status.HTTP_201_CREATED
+                    {'status': 'error', 'message': 'Failed to send OTP email'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
 
             return Response({
                 'status': 'success',
-                'message': 'Registration successful, please verify OTP',
-                'user_id': user.id,
-            }, status=status.HTTP_201_CREATED)
+                'message': 'User registered successfully. Check your email for OTP.',
+                'user_id': str(user.id),
+            }, status=status.HTTP_200_OK)
+
         except Exception as e:
-            print(f"Error registering user: {str(e)}")  # Debug log
+            logger.error(f"Error during registration: {str(e)}")
             return Response(
                 {'status': 'error', 'message': str(e)},
                 status=status.HTTP_400_BAD_REQUEST
@@ -95,7 +110,7 @@ class VerifyOTPAPIView(APIView):
         user_id = request.data.get('user_id')
         otp = request.data.get('otp')
 
-        print(f"Verifying OTP - user_id: {user_id}, otp: {otp}")  # Debug log
+        logger.info(f"Verifying OTP - user_id: {user_id}, otp: {otp}, current_time: {timezone.now()}")
 
         if not all([user_id, otp]):
             return Response(
@@ -105,6 +120,7 @@ class VerifyOTPAPIView(APIView):
 
         try:
             user = User.objects.get(id=user_id)
+            logger.info(f"User found: {user.email}, otp: {user.otp}, created_at: {user.otp_created_at}, is_active: {user.is_active}")
 
             if not user.otp:
                 return Response(
@@ -112,57 +128,62 @@ class VerifyOTPAPIView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            if user.otp != str(otp):
+            # ✅ Corrected password check
+            if not check_password(str(otp), user.otp):
+                logger.warning(f"Invalid OTP attempt for user {user.email}, provided: {otp}, stored: {user.otp}, created_at: {user.otp_created_at}")
                 return Response(
                     {'status': 'error', 'message': 'Invalid OTP'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
+            # ✅ Check if OTP expired
             if user.otp_created_at and user.otp_created_at < (timezone.now() - timezone.timedelta(minutes=5)):
+                logger.warning(f"OTP expired for user {user.email}, created_at: {user.otp_created_at}, now: {timezone.now()}")
                 return Response(
                     {'status': 'error', 'message': 'OTP expired'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # Activate user and verify email
+            # ✅ Mark user as verified
             user.is_active = True
             user.is_email_verified = True
-            user.otp = None  # Clear OTP
-            user.otp_created_at = None  # Clear timestamp
+            user.otp = None
+            user.otp_created_at = None
             user.save()
+            logger.info(f"User {user.email} verified successfully")
 
-            # Send welcome email via Brevo
+            # ✅ Optional: Send Welcome Email
             try:
                 send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(
                     to=[{"email": user.email, "name": user.name}],
-                    sender={"email": settings.BREVO_SENDER_EMAIL, "name": "Your Website Team"},
+                    sender={"email": settings.BREVO_SENDER_EMAIL, "name": "inoseek Team"},
                     template_id=settings.BREVO_WELCOME_TEMPLATE_ID,
                     params={"FIRSTNAME": user.name}
                 )
                 brevo_api_instance.send_transac_email(send_smtp_email)
-                print(f"Welcome email sent to {user.email}")  # Debug log
+                logger.info(f"Welcome email sent to {user.email}")
             except ApiException as e:
-                print(f"Error sending welcome email: {str(e)}")  # Log error but don’t block verification
+                logger.error(f"Error sending welcome email: {str(e)}, Status: {e.status}, Body: {e.body}")
 
-            # Return full user data
             return Response({
                 'status': 'success',
                 'message': 'OTP verified',
-                'user_id': user.id,
+                'user_id': str(user.id),
                 'name': user.name,
                 'email': user.email,
                 'phone_number': user.phone_number,
-                'balance': user.balance,
+                'balance': str(user.balance),
                 'is_email_verified': user.is_email_verified,
             }, status=status.HTTP_200_OK)
 
         except User.DoesNotExist:
+            logger.error(f"User not found for user_id: {user_id}")
             return Response(
                 {'status': 'error', 'message': 'User not found'},
                 status=status.HTTP_404_NOT_FOUND
             )
         except Exception as e:
-            print(f"Error verifying OTP: {str(e)}")  # Debug log
+            logger.error(f"Error verifying OTP: {str(e)}")
             return Response(
                 {'status': 'error', 'message': str(e)},
                 status=status.HTTP_400_BAD_REQUEST
@@ -183,34 +204,37 @@ class ResendOTPAPIView(APIView):
         try:
             user = User.objects.get(email=email)
             if user.is_active:
+                logger.info(f"Resend OTP attempt for already verified user: {email}")
                 return Response(
-                    {'status': 'error', 'message': 'User already verified'},
+                    {'status': 'error', 'message': 'User already verified. Please log in.'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # Generate new OTP
+            if user.otp_created_at and (timezone.now() - user.otp_created_at).total_seconds() < 30:
+                return Response(
+                    {'status': 'error', 'message': 'Please wait 30 seconds before requesting a new OTP'},
+                    status=status.HTTP_429_TOO_MANY_REQUESTS
+                )
+
             otp = ''.join(random.choices(string.digits, k=6))
-            user.otp = otp
-            user.otp_created_at = timezone.now()
+            user.set_otp(otp)  # Use set_otp to hash and set OTP
             user.save()
+            logger.info(f"Resent OTP for {email}: [REDACTED], created_at: {user.otp_created_at}")
 
-            print(f"Resent OTP for {email}: {otp}")  # Debug log
-
-            # Send OTP resend email via Brevo
             try:
                 send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(
                     to=[{"email": email, "name": user.name}],
-                    sender={"email": settings.BREVO_SENDER_EMAIL, "name": "Your Website Team"},
+                    sender={"email": settings.BREVO_SENDER_EMAIL, "name": "inoseek Team"},
                     template_id=settings.BREVO_OTP_RESEND_TEMPLATE_ID,
                     params={"FIRSTNAME": user.name, "OTP_CODE": otp}
                 )
                 brevo_api_instance.send_transac_email(send_smtp_email)
-                print(f"OTP resend email sent to {email}")  # Debug log
+                logger.info(f"OTP resend email sent to {email} with OTP: {otp}")
             except ApiException as e:
-                print(f"Error sending OTP resend email: {str(e)}")  # Log error but don’t block resend
+                logger.error(f"Error sending OTP resend email: {str(e)}, Status: {e.status}, Body: {e.body}")
                 return Response(
-                    {'status': 'success', 'message': 'OTP resent successfully, but email failed to send'},
-                    status=status.HTTP_200_OK
+                    {'status': 'error', 'message': 'Failed to resend OTP email. Please try again later.'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
 
             return Response(
@@ -223,19 +247,20 @@ class ResendOTPAPIView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         except Exception as e:
-            print(f"Error resending OTP: {str(e)}")  # Debug log
+            logger.error(f"Error resending OTP: {str(e)}")
             return Response(
-                {'status': 'error', 'message': str(e)},
+                {'status': 'error', 'message': 'An unexpected error occurred. Please try again.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
 class SetPasswordAPIView(APIView):
     permission_classes = [IsAuthenticated]
+
     def post(self, request):
         password = request.data.get('password')
         try:
             user = request.user
-            user.password_hash = make_password(password)
+            user.password = make_password(password)  # Correctly update password
             user.save()
             return Response({'status': 'success', 'message': 'Password set successfully'})
         except Exception as e:
@@ -243,28 +268,34 @@ class SetPasswordAPIView(APIView):
 
 class LoginAPIView(APIView):
     permission_classes = [AllowAny]
+
     def post(self, request):
         email = request.data.get('email')
         password = request.data.get('password')
+
         try:
             user = User.objects.get(email=email)
-            if check_password(password, user.password_hash):
-                if user.is_email_verified:
-                    refresh = RefreshToken.for_user(user)
-                    return Response({
-                        'status': 'success',
-                        'message': 'Login successful',
-                        'access_token': str(refresh.access_token),
-                        'refresh_token': str(refresh),
-                        'user': UserSerializer(user).data
-                    })
-                return Response({'status': 'error', 'message': 'Email not verified'})
-            return Response({'status': 'error', 'message': 'Invalid password'})
         except User.DoesNotExist:
             return Response({'status': 'error', 'message': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
 
+        if not user.check_password(password):
+            return Response({'status': 'error', 'message': 'Invalid password'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        if not user.is_email_verified:
+            return Response({'status': 'error', 'message': 'Email not verified'}, status=status.HTTP_403_FORBIDDEN)
+
+        refresh = RefreshToken.for_user(user)
+        return Response({
+            'status': 'success',
+            'message': 'Login successful',
+            'access_token': str(refresh.access_token),
+            'refresh_token': str(refresh),
+            'user': UserSerializer(user).data
+        }, status=status.HTTP_200_OK)
+
 class UserProfileAPIView(APIView):
     permission_classes = [IsAuthenticated]
+
     def get(self, request):
         return Response(UserSerializer(request.user).data)
 
@@ -294,9 +325,11 @@ class UserProfileUpdateAPIView(APIView):
 
 class CarListCreateAPIView(APIView):
     permission_classes = [IsAuthenticated]
+
     def get(self, request):
         cars = Car.objects.filter(user=request.user)
         return Response(CarSerializer(cars, many=True).data)
+
     def post(self, request):
         data = request.data
         data['user'] = request.user.id
@@ -308,6 +341,7 @@ class CarListCreateAPIView(APIView):
 
 class CarToggleAPIView(APIView):
     permission_classes = [IsAuthenticated]
+
     def patch(self, request, car_id):
         try:
             car = Car.objects.get(car_id=car_id, user=request.user)
@@ -319,6 +353,7 @@ class CarToggleAPIView(APIView):
 
 class CarDeleteAPIView(APIView):
     permission_classes = [IsAuthenticated]
+
     def delete(self, request, car_id):
         try:
             car = Car.objects.get(car_id=car_id, user=request.user)
@@ -329,18 +364,21 @@ class CarDeleteAPIView(APIView):
 
 class ParkingTransactionListAPIView(APIView):
     permission_classes = [IsAuthenticated]
+
     def get(self, request):
         transactions = ParkingTransaction.objects.filter(car__user=request.user)
         return Response(ParkingTransactionSerializer(transactions, many=True).data)
 
 class PaymentTransactionListAPIView(APIView):
     permission_classes = [IsAuthenticated]
+
     def get(self, request):
         payments = PaymentTransaction.objects.filter(user=request.user)
         return Response(PaymentTransactionSerializer(payments, many=True).data)
 
 class TopUpAPIView(APIView):
     permission_classes = [IsAuthenticated]
+
     def post(self, request):
         amount = request.data.get('amount')
         try:
@@ -361,6 +399,7 @@ class TopUpAPIView(APIView):
 
 class CheckNumberPlate(APIView):
     permission_classes = [AllowAny]
+
     def post(self, request):
         number_plate = request.data.get('number_plate')
         parking_space_id = request.data.get('parking_space_id')
@@ -433,6 +472,7 @@ class CheckNumberPlate(APIView):
 
 class ExitVehicle(APIView):
     permission_classes = [AllowAny]
+
     def post(self, request):
         transaction_id = request.data.get('transaction_id')
         try:
