@@ -11,14 +11,14 @@ from cars.models import Car
 from parking_lots.models import ParkingSpace
 from parking_transactions.models import ParkingTransaction
 from alerts.models import Alert
-from payments.models import PaymentTransaction, CentralTill, ClientTill
-from .serializers import UserSerializer, CarSerializer, ParkingTransactionSerializer, AlertSerializer, PaymentTransactionSerializer
+from .serializers import UserSerializer, CarSerializer, ParkingTransactionSerializer, AlertSerializer
 import random
 import string
 import sib_api_v3_sdk
 from sib_api_v3_sdk.rest import ApiException
 from django.conf import settings
 import logging
+import requests
 
 # Initialize logger
 logger = logging.getLogger(__name__)
@@ -365,36 +365,72 @@ class ParkingTransactionListAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        transactions = ParkingTransaction.objects.filter(car__user=request.user)
-        return Response(ParkingTransactionSerializer(transactions, many=True).data)
+        transactions = ParkingTransaction.objects.filter(user=request.user)
+        serializer = ParkingTransactionSerializer(transactions, many=True)
+        return Response(serializer.data)
 
-class PaymentTransactionListAPIView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        payments = PaymentTransaction.objects.filter(user=request.user)
-        return Response(PaymentTransactionSerializer(payments, many=True).data)
-
-class TopUpAPIView(APIView):
+class InitiatePaymentAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        amount = request.data.get('amount')
-        try:
-            payment = PaymentTransaction.objects.create(
-                user=request.user,
-                transaction_type='top-up',
-                amount=amount,
-                mpesa_transaction_id=f"MPESA_{random.randint(100000, 999999)}",
-                status='pending'
-            )
+        user = request.user
+        amount = request.data.get("amount")
+        phone = request.data.get("phone")
+        parking_transaction_id = request.data.get("parking_transaction_id")
+
+        if not all([amount, phone, parking_transaction_id]):
             return Response({
-                'status': 'success',
-                'message': 'Top-up initiated',
-                'payment': PaymentTransactionSerializer(payment).data
-            }, status=status.HTTP_201_CREATED)
-        except Exception as e:
-            return Response({'status': 'error', 'message': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+                "status": "error",
+                "message": "Missing amount, phone or parking_transaction_id"
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Generate unique order ID (e.g., based on parking_transaction_id)
+        order_id = f"park-{parking_transaction_id}"
+
+        payload = {
+            "user_id": user.id,  # Treated as metadata
+            "order_id": order_id,
+            "amount": amount,
+            "phone_number": phone,
+            "client_till_number": "174379"
+        }
+
+        try:
+            payment_api_url = f"{settings.PAYMENTS_API_URL}/api/v1/payments/process/"
+            response = requests.post(payment_api_url, json=payload, timeout=10)
+
+            if response.status_code == 201:
+                return Response({
+                    "status": "success",
+                    "message": "Payment initiated",
+                    "data": response.json()
+                }, status=status.HTTP_201_CREATED)
+            else:
+                return Response({
+                    "status": "error",
+                    "message": "Payment engine returned an error",
+                    "details": response.text
+                }, status=response.status_code)
+
+        except requests.exceptions.RequestException as e:
+            return Response({
+                "status": "error",
+                "message": "Failed to connect to payment service",
+                "details": str(e)
+            }, status=status.HTTP_502_BAD_GATEWAY)
+
+class PaymentStatusCallbackAPIView(APIView):
+    def post(self, request):
+        data = request.data
+        try:
+            parking_transaction = ParkingTransaction.objects.get(id=data["parking_transaction_id"])
+            parking_transaction.payment_status = data["status"]
+            parking_transaction.mpesa_transaction_id = data.get("mpesa_transaction_id")
+            parking_transaction.save()
+            return Response({"message": "Status updated"}, status=status.HTTP_200_OK)
+        except ParkingTransaction.DoesNotExist:
+            return Response({"error": "Parking transaction not found"}, status=status.HTTP_404_NOT_FOUND)
+
 
 class CheckNumberPlate(APIView):
     permission_classes = [AllowAny]
@@ -469,43 +505,65 @@ class CheckNumberPlate(APIView):
                 'message': 'Parking space not found'
             }, status=status.HTTP_400_BAD_REQUEST)
 
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from rest_framework.permissions import AllowAny
+from django.utils import timezone
+from .serializers import ParkingTransactionSerializer
+import requests
+from decimal import Decimal
+
 class ExitVehicle(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
         transaction_id = request.data.get('transaction_id')
+
         try:
-            transaction = ParkingTransaction.objects.get(transaction_id=transaction_id, status='ongoing')
+            transaction = ParkingTransaction.objects.get(transaction_id=transaction_id, payment_status='PENDING')
+
+            # Calculate fee
             transaction.exit_time = timezone.now()
-            transaction.duration = transaction.exit_time - transaction.entry_time
+            transaction.duration = transaction.exit_time - transaction.check_in_time
             hours = transaction.duration.total_seconds() / 3600
-            transaction.fee = (hours / 24) * 300
-            transaction.cyyks_share = transaction.fee * 0.15
-            transaction.client_share = transaction.fee * 0.85
-            transaction.status = 'completed'
+            daily_rate = Decimal(300)
+            fee = (Decimal(hours) / Decimal(24)) * daily_rate
+            fee = round(fee, 2)
+
+            transaction.total_amount = fee
             transaction.save()
-            transaction.car.user.balance -= transaction.fee
-            transaction.car.user.save()
-            central_till = CentralTill.objects.first() or CentralTill.objects.create()
-            central_till.balance += transaction.cyyks_share
-            central_till.save()
-            client_till = ClientTill.objects.get(parking_lot=transaction.parking_space.parking_lot)
-            client_till.balance += transaction.client_share
-            client_till.save()
-            payment = PaymentTransaction.objects.create(
-                user=transaction.car.user,
-                parking_transaction=transaction,
-                transaction_type='fee_deduction',
-                amount=transaction.fee,
-                status='success'
+
+            # Send payment initiation request to Payments Backend
+            payment_payload = {
+                "order_id": transaction.id,  # used as parking_transaction_id in payments
+                "user_id": transaction.user.id,
+                "amount": str(fee),
+                "client_till_number": "174379",  # Replace if dynamic
+                "phone_number": transaction.user.phone  # Assumes user model has a `phone` field
+            }
+
+            response = requests.post(
+                url="https://ef0a-197-136-187-86.ngrok-free.app/api/payments/process/",
+                json=payment_payload,
+                timeout=10
             )
-            transaction.parking_space.is_occupied = False
-            transaction.parking_space.save()
+
+            if response.status_code != 201:
+                return Response({
+                    "status": "error",
+                    "message": "Failed to initiate payment",
+                    "details": response.json()
+                }, status=response.status_code)
+
             return Response({
-                'status': 'success',
-                'message': 'Exit processed, fee deducted',
-                'transaction': ParkingTransactionSerializer(transaction).data,
-                'payment': PaymentTransactionSerializer(payment).data
-            })
+                "status": "success",
+                "message": "Exit processed. Payment initiation sent.",
+                "transaction": ParkingTransactionSerializer(transaction).data
+            }, status=status.HTTP_200_OK)
+
         except ParkingTransaction.DoesNotExist:
-            return Response({'status': 'error', 'message': 'Transaction not found or already completed'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({
+                'status': 'error',
+                'message': 'Transaction not found or already completed'
+            }, status=status.HTTP_404_NOT_FOUND)

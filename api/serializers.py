@@ -4,7 +4,6 @@ from cars.models import Car
 from parking_lots.models import ParkingLot, ParkingSpace
 from parking_transactions.models import ParkingTransaction
 from alerts.models import Alert
-from payments.models import PaymentTransaction
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -35,8 +34,3 @@ class AlertSerializer(serializers.ModelSerializer):
     class Meta:
         model = Alert
         fields = ['id', 'parking_space', 'number_plate', 'description', 'status', 'created_at']
-
-class PaymentTransactionSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = PaymentTransaction
-        fields = ['id', 'user', 'transaction_type', 'amount', 'mpesa_transaction_id', 'status', 'transaction_time']

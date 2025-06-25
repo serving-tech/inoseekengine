@@ -5,7 +5,7 @@ from .views import (
     RegisterAPIView, VerifyOTPAPIView, SetPasswordAPIView, LoginAPIView,
     UserProfileAPIView, UserProfileUpdateAPIView, CarListCreateAPIView,
     CarToggleAPIView, CarDeleteAPIView, ParkingTransactionListAPIView,
-    PaymentTransactionListAPIView, TopUpAPIView, CheckNumberPlate, ExitVehicle, ResendOTPAPIView
+    PaymentStatusCallbackAPIView,ParkingTransactionListAPIView, CheckNumberPlate, ExitVehicle, ResendOTPAPIView,InitiatePaymentAPIView
 )
 
 urlpatterns = [
@@ -20,10 +20,13 @@ urlpatterns = [
     path('cars/<int:car_id>/toggle/', CarToggleAPIView.as_view(), name='car-toggle'),
     path('cars/<int:car_id>/delete/', CarDeleteAPIView.as_view(), name='car-delete'),
     path('transactions/', ParkingTransactionListAPIView.as_view(), name='transactions'),
-    path('payments/', PaymentTransactionListAPIView.as_view(), name='payments'),
-    path('topup/', TopUpAPIView.as_view(), name='topup'),
     path('check-number-plate/', CheckNumberPlate.as_view(), name='check-number-plate'),
     path('exit-vehicle/', ExitVehicle.as_view(), name='exit-vehicle'),
     path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    
+    path('api/parking-transactions/', ParkingTransactionListAPIView.as_view(), name='parking_transactions'),
+
+    path('api/initiate-payment/', InitiatePaymentAPIView.as_view(), name='initiate_payment'),
+    path('api/payment-status/', PaymentStatusCallbackAPIView.as_view(), name='payment_status_callback'),
 ]
