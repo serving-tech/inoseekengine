@@ -544,7 +544,7 @@ class ExitVehicle(APIView):
             }
 
             response = requests.post(
-                url="https://ef0a-197-136-187-86.ngrok-free.app/api/payments/process/",
+                url="https://inoseekpay.vercel.app/v1/api/payments/process/",
                 json=payment_payload,
                 timeout=10
             )
