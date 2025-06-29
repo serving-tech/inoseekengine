@@ -1,7 +1,7 @@
 from django.contrib.auth import get_user_model
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework import status
+from rest_framework import status, generics
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth.hashers import make_password, check_password
@@ -19,6 +19,8 @@ from sib_api_v3_sdk.rest import ApiException
 from django.conf import settings
 import logging
 import requests
+from parking_transactions.models import ParkingTransaction
+from parking_lots.models import ParkingLot, ParkingSpace
 
 # Initialize logger
 logger = logging.getLogger(__name__)
@@ -369,6 +371,7 @@ class ParkingTransactionListAPIView(APIView):
         serializer = ParkingTransactionSerializer(transactions, many=True)
         return Response(serializer.data)
 
+
 class InitiatePaymentAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -378,46 +381,132 @@ class InitiatePaymentAPIView(APIView):
         phone = request.data.get("phone")
         parking_transaction_id = request.data.get("parking_transaction_id")
 
-        if not all([amount, phone, parking_transaction_id]):
+        # Validate input
+        if not amount or not phone:
             return Response({
                 "status": "error",
-                "message": "Missing amount, phone or parking_transaction_id"
+                "message": "Amount and phone number are required"
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        # Generate unique order ID (e.g., based on parking_transaction_id)
-        order_id = f"park-{parking_transaction_id}"
+        try:
+            amount = Decimal(amount)
+            if amount <= 0:
+                raise ValueError("Amount must be greater than zero")
+        except (ValueError, TypeError):
+            return Response({
+                "status": "error",
+                "message": "Invalid amount format"
+            }, status=status.HTTP_400_BAD_REQUEST)
 
+        # Generate order ID
+        order_id = (
+            f"topup-{user.id}-{int(timezone.now().timestamp())}"
+            if not parking_transaction_id
+            else f"park-{parking_transaction_id}"
+        )
+
+        # For top-ups, use a default ParkingSpace and nullable Car
+        if not parking_transaction_id:
+            default_lot, _ = ParkingLot.objects.get_or_create(
+                name="Top-up Lot",
+                defaults={"location": "N/A", "total_spaces": 0}
+            )
+            default_space, _ = ParkingSpace.objects.get_or_create(
+                parking_lot=default_lot,
+                space_number="TOPUP",
+                defaults={"is_occupied": False}
+            )
+            car = Car.objects.filter(user=user, is_active=True).first()
+        else:
+            try:
+                transaction = ParkingTransaction.objects.get(
+                    id=parking_transaction_id, car__user=user, status='ongoing'
+                )
+                default_space = transaction.parking_space
+                car = transaction.car
+            except ParkingTransaction.DoesNotExist:
+                return Response({
+                    "status": "error",
+                    "message": "Invalid or unauthorized parking transaction"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Prepare payment payload
         payload = {
-            "user_id": user.id,  # Treated as metadata
+            "user_id": user.id,
             "order_id": order_id,
-            "amount": amount,
+            "amount": str(amount),
             "phone_number": phone,
-            "client_till_number": "174379"
+            "client_till_number": settings.CLIENT_TILL_NUMBER or "174379"
         }
 
         try:
             payment_api_url = f"{settings.PAYMENTS_API_URL}/api/v1/payments/process/"
-            response = requests.post(payment_api_url, json=payload, timeout=10)
+            headers = {
+                "Content-Type": "application/json",
+                # Add API key if required by payment service
+                "Authorization": getattr(settings, "PAYMENTS_API_KEY", ""),
+            }
+            logger.info(f"Sending payment request to {payment_api_url} with payload: {payload}")
+            response = requests.post(payment_api_url, json=payload, headers=headers, timeout=10)
+            response.raise_for_status()
+            payment_data = response.json()
+            logger.info(f"Payment response: {response.status_code}, {payment_data}")
 
-            if response.status_code == 201:
+            if response.status_code == 201 and payment_data.get('status') == 'success':
+                if not parking_transaction_id:
+                    # Create top-up transaction
+                    ParkingTransaction.objects.create(
+                        car=car,
+                        parking_space=default_space,
+                        entry_time=timezone.now(),
+                        fee=amount,
+                        status='topup',
+                        created_at=timezone.now(),
+                    )
+                    # Update user balance
+                    user.balance = (user.balance or Decimal('0')) + amount
+                    user.save()
+                else:
+                    # Update existing parking transaction
+                    transaction.fee = amount
+                    transaction.status = 'completed'
+                    transaction.exit_time = timezone.now()
+                    transaction.duration = transaction.exit_time - transaction.entry_time
+                    transaction.save()
+
                 return Response({
                     "status": "success",
-                    "message": "Payment initiated",
-                    "data": response.json()
+                    "message": "Payment initiated successfully",
+                    "data": payment_data
                 }, status=status.HTTP_201_CREATED)
             else:
+                logger.error(f"Payment engine error: {response.status_code}, {response.text}")
                 return Response({
                     "status": "error",
                     "message": "Payment engine returned an error",
-                    "details": response.text
+                    "details": payment_data.get('message', response.text)
                 }, status=response.status_code)
-
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"Payment HTTP error: {str(e)}, Response: {e.response.text if e.response else 'No response'}")
+            return Response({
+                "status": "error",
+                "message": "Failed to connect to payment service",
+                "details": f"{str(e)}: {e.response.text if e.response else 'No response'}"
+            }, status=status.HTTP_502_BAD_GATEWAY)
         except requests.exceptions.RequestException as e:
+            logger.error(f"Payment request failed: {str(e)}")
             return Response({
                 "status": "error",
                 "message": "Failed to connect to payment service",
                 "details": str(e)
             }, status=status.HTTP_502_BAD_GATEWAY)
+        except Exception as e:
+            logger.error(f"Unexpected error: {str(e)}")
+            return Response({
+                "status": "error",
+                "message": "An unexpected error occurred",
+                "details": str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class PaymentStatusCallbackAPIView(APIView):
     def post(self, request):
@@ -567,3 +656,11 @@ class ExitVehicle(APIView):
                 'status': 'error',
                 'message': 'Transaction not found or already completed'
             }, status=status.HTTP_404_NOT_FOUND)
+
+
+class TransactionsAPIView(generics.ListAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = ParkingTransactionSerializer
+
+    def get_queryset(self):
+        return ParkingTransaction.objects.filter(car__user=self.request.user).order_by('-created_at')

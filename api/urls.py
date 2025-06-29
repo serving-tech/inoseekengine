@@ -22,11 +22,12 @@ urlpatterns = [
     path('transactions/', ParkingTransactionListAPIView.as_view(), name='transactions'),
     path('check-number-plate/', CheckNumberPlate.as_view(), name='check-number-plate'),
     path('exit-vehicle/', ExitVehicle.as_view(), name='exit-vehicle'),
-    path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
-    path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path('token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
+    path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     
-    path('api/parking-transactions/', ParkingTransactionListAPIView.as_view(), name='parking_transactions'),
+    path('parking-transactions/', ParkingTransactionListAPIView.as_view(), name='parking_transactions'),
 
-    path('api/initiate-payment/', InitiatePaymentAPIView.as_view(), name='initiate_payment'),
-    path('api/payment-status/', PaymentStatusCallbackAPIView.as_view(), name='payment_status_callback'),
+    path('initiate-payment/', InitiatePaymentAPIView.as_view(), name='initiate_payment'),
+    path('payment-status/', PaymentStatusCallbackAPIView.as_view(), name='payment_status_callback'),
+
 ]

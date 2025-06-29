@@ -46,12 +46,13 @@ DATABASES = {
 SECRET_KEY = 'django-insecure-#ev&v*lf)olov#gun%8^$@yrqpd5k@7m@ao&!@x$3e&v3o7f@2'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = False
+DEBUG = True
 
 ALLOWED_HOSTS = [
     "inoseekengine.onrender.com",
     "localhost",
     "127.0.0.1:8000",
+    "127.0.0.1",
 ]
 
 
@@ -207,3 +208,6 @@ BREVO_OTP_RESEND_TEMPLATE_ID = int(os.getenv('BREVO_OTP_RESEND_TEMPLATE_ID'))
 BREVO_WELCOME_TEMPLATE_ID = int(os.getenv('BREVO_WELCOME_TEMPLATE_ID'))
 
 AUTH_USER_MODEL = 'users.User'
+
+CLIENT_TILL_NUMBER = 174379
+PAYMENTS_API_URL = "https://inoseekpay.vercel.app"
