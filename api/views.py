@@ -371,6 +371,17 @@ class ParkingTransactionListAPIView(APIView):
         serializer = ParkingTransactionSerializer(transactions, many=True)
         return Response(serializer.data)
 
+from decimal import Decimal
+from django.conf import settings
+from django.utils import timezone
+from rest_framework.views import APIView
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework import status
+import requests
+import logging
+
+logger = logging.getLogger(__name__)
 
 class InitiatePaymentAPIView(APIView):
     permission_classes = [IsAuthenticated]
@@ -430,31 +441,29 @@ class InitiatePaymentAPIView(APIView):
                     "message": "Invalid or unauthorized parking transaction"
                 }, status=status.HTTP_400_BAD_REQUEST)
 
-        # Prepare payment payload
+        # Prepare payment payload (only required fields)
         payload = {
-            "user_id": user.id,
             "order_id": order_id,
-            "amount": str(amount),
-            "phone_number": phone,
-            "client_till_number": settings.CLIENT_TILL_NUMBER or "174379"
+            "user_id": str(user.id),
+            "amount": str(int(amount)),  # use plain integer string
+            "client_till_number": settings.CLIENT_TILL_NUMBER or "174379",
+            "phone_number": phone
         }
 
         try:
             payment_api_url = f"{settings.PAYMENTS_API_URL}/api/v1/payments/process/"
             headers = {
-                "Content-Type": "application/json",
-                # Add API key if required by payment service
-                "Authorization": getattr(settings, "PAYMENTS_API_KEY", ""),
+                "Content-Type": "application/json"
             }
+
             logger.info(f"Sending payment request to {payment_api_url} with payload: {payload}")
             response = requests.post(payment_api_url, json=payload, headers=headers, timeout=10)
             response.raise_for_status()
             payment_data = response.json()
             logger.info(f"Payment response: {response.status_code}, {payment_data}")
 
-            if response.status_code == 201 and payment_data.get('status') == 'success':
+            if response.status_code in (200, 201) and payment_data.get('status') == 'success':
                 if not parking_transaction_id:
-                    # Create top-up transaction
                     ParkingTransaction.objects.create(
                         car=car,
                         parking_space=default_space,
@@ -463,11 +472,9 @@ class InitiatePaymentAPIView(APIView):
                         status='topup',
                         created_at=timezone.now(),
                     )
-                    # Update user balance
                     user.balance = (user.balance or Decimal('0')) + amount
                     user.save()
                 else:
-                    # Update existing parking transaction
                     transaction.fee = amount
                     transaction.status = 'completed'
                     transaction.exit_time = timezone.now()
@@ -479,6 +486,7 @@ class InitiatePaymentAPIView(APIView):
                     "message": "Payment initiated successfully",
                     "data": payment_data
                 }, status=status.HTTP_201_CREATED)
+
             else:
                 logger.error(f"Payment engine error: {response.status_code}, {response.text}")
                 return Response({
@@ -486,6 +494,7 @@ class InitiatePaymentAPIView(APIView):
                     "message": "Payment engine returned an error",
                     "details": payment_data.get('message', response.text)
                 }, status=response.status_code)
+
         except requests.exceptions.HTTPError as e:
             logger.error(f"Payment HTTP error: {str(e)}, Response: {e.response.text if e.response else 'No response'}")
             return Response({
@@ -507,6 +516,7 @@ class InitiatePaymentAPIView(APIView):
                 "message": "An unexpected error occurred",
                 "details": str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 class PaymentStatusCallbackAPIView(APIView):
     def post(self, request):
