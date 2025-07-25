@@ -1,4 +1,4 @@
-from django.urls import path
+from django.urls import path, include
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from .views import (
@@ -30,4 +30,8 @@ urlpatterns = [
     path('initiate-payment/', InitiatePaymentAPIView.as_view(), name='initiate_payment'),
     path('payment-status/', PaymentStatusCallbackAPIView.as_view(), name='payment_status_callback'),
 
+    # Mount the client API endpoints under /client/
+    path('client/', include('api.client.urls')),
+    # Mount the company API endpoints under /company/
+    path('company/', include('api.company.urls')),
 ]

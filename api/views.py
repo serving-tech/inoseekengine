@@ -370,7 +370,6 @@ class ParkingTransactionListAPIView(APIView):
         transactions = ParkingTransaction.objects.filter(user=request.user)
         serializer = ParkingTransactionSerializer(transactions, many=True)
         return Response(serializer.data)
-
 from decimal import Decimal
 from django.conf import settings
 from django.utils import timezone
@@ -380,6 +379,7 @@ from rest_framework.response import Response
 from rest_framework import status
 import requests
 import logging
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -409,12 +409,13 @@ class InitiatePaymentAPIView(APIView):
                 "message": "Invalid amount format"
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        # Generate order ID
+        # Generate order ID and transaction ID
         order_id = (
             f"topup-{user.id}-{int(timezone.now().timestamp())}"
             if not parking_transaction_id
             else f"park-{parking_transaction_id}"
         )
+        transaction_id = str(uuid.uuid4())
 
         # For top-ups, use a default ParkingSpace and nullable Car
         if not parking_transaction_id:
@@ -441,28 +442,29 @@ class InitiatePaymentAPIView(APIView):
                     "message": "Invalid or unauthorized parking transaction"
                 }, status=status.HTTP_400_BAD_REQUEST)
 
-        # Prepare payment payload (only required fields)
+        # Prepare payment payload
         payload = {
+            "transaction_id": transaction_id,
             "order_id": order_id,
             "user_id": str(user.id),
-            "amount": str(int(amount)),  # use plain integer string
+            "amount": f"{amount:.2f}",  # Decimal string, e.g., "100.00"
+            "commission": "0.00",  # Required, adjust per business logic
+            "disbursement_amount": f"{amount:.2f}",  # Required, match amount
             "client_till_number": settings.CLIENT_TILL_NUMBER or "174379",
-            "phone_number": phone
+            "status": "PENDING"  # Required
         }
 
         try:
             payment_api_url = f"{settings.PAYMENTS_API_URL}/api/v1/payments/process/"
-            headers = {
-                "Content-Type": "application/json"
-            }
+            headers = {"Content-Type": "application/json"}  # No auth, as endpoint is open
 
-            logger.info(f"Sending payment request to {payment_api_url} with payload: {payload}")
+            logger.info(f"Sending payment request to {payment_api_url} with payload: {payload}, headers: {headers}")
             response = requests.post(payment_api_url, json=payload, headers=headers, timeout=10)
             response.raise_for_status()
             payment_data = response.json()
-            logger.info(f"Payment response: {response.status_code}, {payment_data}")
+            logger.info(f"Payment response: {response.status_code}, Body: {payment_data}")
 
-            if response.status_code in (200, 201) and payment_data.get('status') == 'success':
+            if response.status_code in (200, 201):
                 if not parking_transaction_id:
                     ParkingTransaction.objects.create(
                         car=car,
@@ -488,7 +490,7 @@ class InitiatePaymentAPIView(APIView):
                 }, status=status.HTTP_201_CREATED)
 
             else:
-                logger.error(f"Payment engine error: {response.status_code}, {response.text}")
+                logger.error(f"Payment engine error: Status {response.status_code}, Body: {response.text}, Headers: {response.headers}")
                 return Response({
                     "status": "error",
                     "message": "Payment engine returned an error",
@@ -496,7 +498,7 @@ class InitiatePaymentAPIView(APIView):
                 }, status=response.status_code)
 
         except requests.exceptions.HTTPError as e:
-            logger.error(f"Payment HTTP error: {str(e)}, Response: {e.response.text if e.response else 'No response'}")
+            logger.error(f"Payment HTTP error: {str(e)}, Response: {e.response.text if e.response else 'No response'}, Headers: {e.response.headers if e.response else 'No headers'}")
             return Response({
                 "status": "error",
                 "message": "Failed to connect to payment service",
@@ -516,7 +518,6 @@ class InitiatePaymentAPIView(APIView):
                 "message": "An unexpected error occurred",
                 "details": str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
 
 class PaymentStatusCallbackAPIView(APIView):
     def post(self, request):

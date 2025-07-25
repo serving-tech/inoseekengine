@@ -1,10 +1,12 @@
 from django.db import models
+from django.conf import settings
 
 class ParkingLot(models.Model):
     name = models.CharField(max_length=100)
     location = models.TextField()
     total_spaces = models.PositiveIntegerField()
     created_at = models.DateTimeField(auto_now_add=True)
+    client = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='parking_lots', null=True, blank=True)
 
     def __str__(self):
         return self.name

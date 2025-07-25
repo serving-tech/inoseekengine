@@ -53,6 +53,7 @@ ALLOWED_HOSTS = [
     "localhost",
     "127.0.0.1:8000",
     "127.0.0.1",
+    ".ngrok-free.app",
 ]
 
 
@@ -68,6 +69,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework.authtoken',
     'corsheaders',
+    'drf_yasg',
     'users',
     'cars',
     'parking_lots',

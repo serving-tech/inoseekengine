@@ -33,6 +33,13 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     is_active = models.BooleanField(default=False)  # Changed to False until verified
     is_staff = models.BooleanField(default=False)
+    ROLE_CHOICES = [
+        ('company_admin', 'Company Admin'),
+        ('client', 'Client'),
+        ('staff', 'Staff'),
+        ('driver', 'Driver'),
+    ]
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='driver')
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
