@@ -38,7 +38,6 @@ DATABASES = {
     'default': dj_database_url.parse(DATABASE_URL, conn_max_age=600, ssl_require=True)
 }
 
-
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
@@ -56,11 +55,9 @@ ALLOWED_HOSTS = [
     ".ngrok-free.app",
 ]
 
-
 # Application definition
-
 INSTALLED_APPS = [
-    'django.contrib.admin',
+    'django.contrib.admin',  # Required for admin interface
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
@@ -83,18 +80,12 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'corsheaders.middleware.CorsMiddleware',  # For API CORS support
     'django.middleware.common.CommonMiddleware',
-    'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'django.contrib.messages.middleware.MessageMiddleware',
-    'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'corsheaders.middleware.CorsMiddleware',
+    'django.contrib.messages.middleware.MessageMiddleware',  # Required for admin
+    'django.middleware.clickjacking.XFrameOptionsMiddleware',  # Optional, for security
 ]
-#
-# CORS_ALLOWED_ORIGINS = [
-#     "http://localhost",
-#     "http://127.0.0.1:59621",  # Optional: cover variations
-# ]
 
 CORS_ALLOW_ALL_ORIGINS = True
 
@@ -121,7 +112,7 @@ TEMPLATES = [
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
-                'django.template.context_processors.request',
+                'django.template.context_processors.request',  # Required for admin sidebar
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
             ],
@@ -130,7 +121,6 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'inoseekengine.wsgi.application'
-
 
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
@@ -142,6 +132,16 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
+    'DEFAULT_RENDERER_CLASSES': [
+        'rest_framework.renderers.JSONRenderer',
+        'rest_framework.renderers.BrowsableAPIRenderer',  # For DRF browsable API
+    ],
+    'DEFAULT_PARSER_CLASSES': [
+        'rest_framework.parsers.JSONParser',
+        'rest_framework.parsers.FormParser',
+        'rest_framework.parsers.MultiPartParser',
+    ],
+    'EXCEPTION_HANDLER': 'rest_framework.views.exception_handler',  # Ensure DRF handles exceptions
 }
 
 SIMPLE_JWT = {
@@ -178,7 +178,6 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
-
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
 
@@ -190,7 +189,6 @@ USE_I18N = True
 
 USE_TZ = True
 
-
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
@@ -201,8 +199,6 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-
-
 BREVO_API_KEY = os.getenv('BREVO_API_KEY')
 BREVO_SENDER_EMAIL = os.getenv('BREVO_SENDER_EMAIL')
 BREVO_OTP_TEMPLATE_ID = int(os.getenv('BREVO_OTP_TEMPLATE_ID'))
@@ -211,5 +207,6 @@ BREVO_WELCOME_TEMPLATE_ID = int(os.getenv('BREVO_WELCOME_TEMPLATE_ID'))
 
 AUTH_USER_MODEL = 'users.User'
 
-CLIENT_TILL_NUMBER = 174379
+CLIENT_TILL_NUMBER = "174379"
 PAYMENTS_API_URL = "https://inoseekpay.vercel.app"
+PAYMENT_CALLBACK_URL = "http://127.0.0.1:8000"

@@ -1,11 +1,12 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, BasePermission
+from rest_framework.renderers import JSONRenderer
 from users.models import User
 from parking_lots.models import ParkingLot, ParkingSpace
 from parking_transactions.models import ParkingTransaction
 from api.serializers import UserSerializer, ParkingLotSerializer, ParkingTransactionSerializer
-from django.db.models import Sum, Count, Q
+from django.db.models import Sum, Count
 from rest_framework import status
 from datetime import datetime, timedelta
 from alerts.models import Alert
@@ -16,15 +17,14 @@ from api.serializers import SupportTicketSerializer
 def is_company_admin(user):
     return getattr(user, 'role', None) == 'company_admin'
 
-class CompanyAdminRequiredMixin:
-    def dispatch(self, request, *args, **kwargs):
-        if not is_company_admin(request.user):
-            return Response({'detail': 'Forbidden: company admin only'}, status=status.HTTP_403_FORBIDDEN)
-        return super().dispatch(request, *args, **kwargs)
+class IsCompanyAdmin(BasePermission):
+    def has_permission(self, request, view):
+        return is_company_admin(request.user)
 
 # 1. Dashboard (Global Overview)
-class CompanyDashboardAPIView(CompanyAdminRequiredMixin, APIView):
-    permission_classes = [IsAuthenticated]
+class CompanyDashboardAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsCompanyAdmin]
+    renderer_classes = [JSONRenderer]
     def get(self, request):
         total_revenue = ParkingTransaction.objects.aggregate(total=Sum('fee'))['total'] or 0
         total_users = User.objects.filter(is_email_verified=True, is_staff=False, role='driver').count()
@@ -41,14 +41,19 @@ class CompanyDashboardAPIView(CompanyAdminRequiredMixin, APIView):
             'active_sessions': active_sessions,
             'live_occupancy': live_occupancy,
         }
-        return Response({
+        response = Response({
             'kpis': kpis,
             'recent_transactions': recent_transactions,
         })
+        response.accepted_renderer = JSONRenderer()
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        return response
 
 # 2. Clients Management
-class CompanyClientsAPIView(CompanyAdminRequiredMixin, APIView):
-    permission_classes = [IsAuthenticated]
+class CompanyClientsAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsCompanyAdmin]
+    renderer_classes = [JSONRenderer]
     def get(self, request):
         clients = User.objects.filter(role='client')
         data = []
@@ -60,106 +65,189 @@ class CompanyClientsAPIView(CompanyAdminRequiredMixin, APIView):
                 'total_locations': lots.count(),
                 'revenue': revenue,
             })
-        return Response(data)
+        response = Response(data)
+        response.accepted_renderer = JSONRenderer()
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        return response
 
 class CompanyClientDetailAPIView(APIView):
     permission_classes = [IsAuthenticated]
+    renderer_classes = [JSONRenderer]
     def get(self, request, client_id):
-        return Response({"message": f"Client {client_id} details"})
+        response = Response({"message": f"Client {client_id} details"})
+        response.accepted_renderer = JSONRenderer()
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        return response
     def put(self, request, client_id):
-        return Response({"message": f"Client {client_id} updated"})
+        response = Response({"message": f"Client {client_id} updated"})
+        response.accepted_renderer = JSONRenderer()
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        return response
     def delete(self, request, client_id):
-        return Response({"message": f"Client {client_id} deleted"})
+        response = Response({"message": f"Client {client_id} deleted"})
+        response.accepted_renderer = JSONRenderer()
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        return response
 
 # 3. Locations Management
-class CompanyLocationsAPIView(CompanyAdminRequiredMixin, APIView):
-    permission_classes = [IsAuthenticated]
+class CompanyLocationsAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsCompanyAdmin]
+    renderer_classes = [JSONRenderer]
     def get(self, request):
         lots = ParkingLot.objects.all()
-        return Response(ParkingLotSerializer(lots, many=True).data)
+        response = Response(ParkingLotSerializer(lots, many=True).data)
+        response.accepted_renderer = JSONRenderer()
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        return response
 
 class CompanyLocationDetailAPIView(APIView):
     permission_classes = [IsAuthenticated]
+    renderer_classes = [JSONRenderer]
     def get(self, request, location_id):
-        return Response({"message": f"Location {location_id} details"})
+        response = Response({"message": f"Location {location_id} details"})
+        response.accepted_renderer = JSONRenderer()
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        return response
     def put(self, request, location_id):
-        return Response({"message": f"Location {location_id} updated"})
+        response = Response({"message": f"Location {location_id} updated"})
+        response.accepted_renderer = JSONRenderer()
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        return response
     def delete(self, request, location_id):
-        return Response({"message": f"Location {location_id} deleted"})
+        response = Response({"message": f"Location {location_id} deleted"})
+        response.accepted_renderer = JSONRenderer()
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        return response
 
 # 4. Users (Drivers)
-class CompanyUsersAPIView(CompanyAdminRequiredMixin, APIView):
-    permission_classes = [IsAuthenticated]
+class CompanyUsersAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsCompanyAdmin]
+    renderer_classes = [JSONRenderer]
     def get(self, request):
         users = User.objects.filter(role='driver')
-        return Response(UserSerializer(users, many=True).data)
+        response = Response(UserSerializer(users, many=True).data)
+        response.accepted_renderer = JSONRenderer()
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        return response
 
 class CompanyUserDetailAPIView(APIView):
     permission_classes = [IsAuthenticated]
+    renderer_classes = [JSONRenderer]
     def get(self, request, user_id):
-        return Response({"message": f"User {user_id} details"})
+        response = Response({"message": f"User {user_id} details"})
+        response.accepted_renderer = JSONRenderer()
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        return response
     def put(self, request, user_id):
-        return Response({"message": f"User {user_id} updated"})
+        response = Response({"message": f"User {user_id} updated"})
+        response.accepted_renderer = JSONRenderer()
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        return response
 
 # 5. Staff Management
-class CompanyStaffAPIView(CompanyAdminRequiredMixin, APIView):
-    permission_classes = [IsAuthenticated]
+class CompanyStaffAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsCompanyAdmin]
+    renderer_classes = [JSONRenderer]
     def get(self, request):
         staff = User.objects.filter(role='staff')
-        return Response(UserSerializer(staff, many=True).data)
+        response = Response(UserSerializer(staff, many=True).data)
+        response.accepted_renderer = JSONRenderer()
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        return response
     def post(self, request):
         data = request.data.copy()
         data['role'] = 'staff'
         serializer = UserSerializer(data=data)
         if serializer.is_valid():
             serializer.save(role='staff')
-            return Response(serializer.data, status=201)
-        return Response(serializer.errors, status=400)
+            response = Response(serializer.data, status=201)
+        else:
+            response = Response(serializer.errors, status=400)
+        response.accepted_renderer = JSONRenderer()
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        return response
 
-class CompanyStaffDetailAPIView(CompanyAdminRequiredMixin, APIView):
-    permission_classes = [IsAuthenticated]
+class CompanyStaffDetailAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsCompanyAdmin]
+    renderer_classes = [JSONRenderer]
     def get(self, request, staff_id):
         try:
             staff = User.objects.get(id=staff_id, role='staff')
+            response = Response(UserSerializer(staff).data)
         except User.DoesNotExist:
-            return Response({'error': 'Not found'}, status=404)
-        return Response(UserSerializer(staff).data)
+            response = Response({'error': 'Not found'}, status=404)
+        response.accepted_renderer = JSONRenderer()
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        return response
     def put(self, request, staff_id):
         try:
             staff = User.objects.get(id=staff_id, role='staff')
+            serializer = UserSerializer(staff, data=request.data, partial=True)
+            if serializer.is_valid():
+                serializer.save()
+                response = Response(serializer.data)
+            else:
+                response = Response(serializer.errors, status=400)
         except User.DoesNotExist:
-            return Response({'error': 'Not found'}, status=404)
-        serializer = UserSerializer(staff, data=request.data, partial=True)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data)
-        return Response(serializer.errors, status=400)
+            response = Response({'error': 'Not found'}, status=404)
+        response.accepted_renderer = JSONRenderer()
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        return response
     def delete(self, request, staff_id):
         try:
             staff = User.objects.get(id=staff_id, role='staff')
+            staff.delete()
+            response = Response(status=204)
         except User.DoesNotExist:
-            return Response({'error': 'Not found'}, status=404)
-        staff.delete()
-        return Response(status=204)
+            response = Response({'error': 'Not found'}, status=404)
+        response.accepted_renderer = JSONRenderer()
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        return response
 
 # 6. Parking Sessions (Live Activity)
-class CompanyParkingSessionsAPIView(CompanyAdminRequiredMixin, APIView):
-    permission_classes = [IsAuthenticated]
+class CompanyParkingSessionsAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsCompanyAdmin]
+    renderer_classes = [JSONRenderer]
     def get(self, request):
         sessions = ParkingTransaction.objects.filter(status='ongoing')
-        return Response(ParkingTransactionSerializer(sessions, many=True).data)
+        response = Response(ParkingTransactionSerializer(sessions, many=True).data)
+        response.accepted_renderer = JSONRenderer()
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        return response
 
 # 7. Parking History (All Time)
 class CompanyParkingHistoryAPIView(APIView):
     permission_classes = [IsAuthenticated]
+    renderer_classes = [JSONRenderer]
     def get(self, request):
-        return Response({"message": "Parking history data (all time)"})
+        response = Response({"message": "Parking history data (all time)"})
+        response.accepted_renderer = JSONRenderer()
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        return response
 
 # 8. Financial Transactions
-class CompanyFinancialTransactionsAPIView(CompanyAdminRequiredMixin, APIView):
-    permission_classes = [IsAuthenticated]
+class CompanyFinancialTransactionsAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsCompanyAdmin]
+    renderer_classes = [JSONRenderer]
     def get(self, request):
-        # Example: revenue by day for last 30 days
         today = datetime.today().date()
         days = [today - timedelta(days=i) for i in range(30)]
         revenue_by_day = []
@@ -168,13 +256,17 @@ class CompanyFinancialTransactionsAPIView(CompanyAdminRequiredMixin, APIView):
                 created_at__date=day
             ).aggregate(total=Sum('fee'))['total'] or 0
             revenue_by_day.append({'date': day, 'revenue': total})
-        return Response({'revenue_by_day': revenue_by_day})
+        response = Response({'revenue_by_day': revenue_by_day})
+        response.accepted_renderer = JSONRenderer()
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        return response
 
 # 9. Analytics & Reports
-class CompanyAnalyticsAPIView(CompanyAdminRequiredMixin, APIView):
-    permission_classes = [IsAuthenticated]
+class CompanyAnalyticsAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsCompanyAdmin]
+    renderer_classes = [JSONRenderer]
     def get(self, request):
-        # Example: client performance comparison
         clients = User.objects.filter(role='client')
         analytics = []
         for client in clients:
@@ -185,46 +277,78 @@ class CompanyAnalyticsAPIView(CompanyAdminRequiredMixin, APIView):
                 'revenue': revenue,
                 'sessions': sessions,
             })
-        return Response({'client_performance': analytics})
+        response = Response({'client_performance': analytics})
+        response.accepted_renderer = JSONRenderer()
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        return response
 
 # 10. Notifications & Alerts
-class CompanyNotificationsAPIView(CompanyAdminRequiredMixin, APIView):
-    permission_classes = [IsAuthenticated]
+class CompanyNotificationsAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsCompanyAdmin]
+    renderer_classes = [JSONRenderer]
     def get(self, request):
         alerts = Alert.objects.all().order_by('-created_at')[:100]
-        return Response(AlertSerializer(alerts, many=True).data)
+        response = Response(AlertSerializer(alerts, many=True).data)
+        response.accepted_renderer = JSONRenderer()
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        return response
 
 # 11. System Settings
 class CompanySettingsAPIView(APIView):
     permission_classes = [IsAuthenticated]
+    renderer_classes = [JSONRenderer]
     def get(self, request):
-        return Response({"message": "System settings data"})
+        response = Response({"message": "System settings data"})
+        response.accepted_renderer = JSONRenderer()
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        return response
     def put(self, request):
-        return Response({"message": "System settings updated"})
+        response = Response({"message": "System settings updated"})
+        response.accepted_renderer = JSONRenderer()
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        return response
 
 # 12. Support / Helpdesk
-class CompanySupportAPIView(CompanyAdminRequiredMixin, APIView):
-    permission_classes = [IsAuthenticated]
+class CompanySupportAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsCompanyAdmin]
+    renderer_classes = [JSONRenderer]
     def get(self, request):
         tickets = SupportTicket.objects.all().order_by('-created_at')[:100]
-        return Response(SupportTicketSerializer(tickets, many=True).data)
+        response = Response(SupportTicketSerializer(tickets, many=True).data)
+        response.accepted_renderer = JSONRenderer()
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        return response
     def post(self, request):
         data = request.data.copy()
         data['user'] = request.user.id
         serializer = SupportTicketSerializer(data=data)
         if serializer.is_valid():
             serializer.save(user=request.user)
-            return Response(serializer.data, status=201)
-        return Response(serializer.errors, status=400)
-
+            response = Response(serializer.data, status=201)
+        else:
+            response = Response(serializer.errors, status=400)
+        response.accepted_renderer = JSONRenderer()
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        return response
     def put(self, request):
         ticket_id = request.data.get('id')
         try:
             ticket = SupportTicket.objects.get(id=ticket_id)
+            serializer = SupportTicketSerializer(ticket, data=request.data, partial=True)
+            if serializer.is_valid():
+                serializer.save()
+                response = Response(serializer.data)
+            else:
+                response = Response(serializer.errors, status=400)
         except SupportTicket.DoesNotExist:
-            return Response({'error': 'Not found'}, status=404)
-        serializer = SupportTicketSerializer(ticket, data=request.data, partial=True)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data)
-        return Response(serializer.errors, status=400) 
+            response = Response({'error': 'Not found'}, status=404)
+        response.accepted_renderer = JSONRenderer()
+        response.accepted_media_type = 'application/json'
+        response.renderer_context = {}
+        return response

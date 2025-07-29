@@ -1,6 +1,6 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, BasePermission
 from parking_lots.models import ParkingLot, ParkingSpace
 from parking_transactions.models import ParkingTransaction
 from api.serializers import ParkingLotSerializer, ParkingTransactionSerializer
@@ -15,18 +15,13 @@ from api.serializers import SupportTicketSerializer
 
 User = get_user_model()
 
-def is_client(user):
-    return getattr(user, 'role', None) == 'client'
-
-class ClientRequiredMixin:
-    def dispatch(self, request, *args, **kwargs):
-        if not is_client(request.user):
-            return Response({'detail': 'Forbidden: client only'}, status=status.HTTP_403_FORBIDDEN)
-        return super().dispatch(request, *args, **kwargs)
+class IsClientPermission(BasePermission):
+    def has_permission(self, request, view):
+        return getattr(request.user, 'role', None) == 'client'
 
 # 1. Dashboard (Home Overview)
-class ClientDashboardAPIView(ClientRequiredMixin, APIView):
-    permission_classes = [IsAuthenticated]
+class ClientDashboardAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsClientPermission]
     def get(self, request):
         location_id = request.query_params.get('location_id')
         lots = ParkingLot.objects.filter(client=request.user)
@@ -52,8 +47,8 @@ class ClientDashboardAPIView(ClientRequiredMixin, APIView):
         })
 
 # 2. Locations Management
-class ClientLocationsAPIView(ClientRequiredMixin, APIView):
-    permission_classes = [IsAuthenticated]
+class ClientLocationsAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsClientPermission]
     def get(self, request):
         lots = ParkingLot.objects.filter(client=request.user)
         return Response(ParkingLotSerializer(lots, many=True).data)
@@ -66,8 +61,8 @@ class ClientLocationsAPIView(ClientRequiredMixin, APIView):
             return Response(serializer.data, status=201)
         return Response(serializer.errors, status=400)
 
-class ClientLocationDetailAPIView(ClientRequiredMixin, APIView):
-    permission_classes = [IsAuthenticated]
+class ClientLocationDetailAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsClientPermission]
     def put(self, request, location_id):
         try:
             lot = ParkingLot.objects.get(id=location_id, client=request.user)
@@ -80,8 +75,8 @@ class ClientLocationDetailAPIView(ClientRequiredMixin, APIView):
         return Response(serializer.errors, status=400)
 
 # 3. Current Parking (Live Activity)
-class ClientCurrentParkingAPIView(ClientRequiredMixin, APIView):
-    permission_classes = [IsAuthenticated]
+class ClientCurrentParkingAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsClientPermission]
     def get(self, request):
         location_id = request.query_params.get('location_id')
         lots = ParkingLot.objects.filter(client=request.user)
@@ -103,8 +98,8 @@ class ClientCurrentParkingAPIView(ClientRequiredMixin, APIView):
         })
 
 # 4. Parking History
-class ClientParkingHistoryAPIView(ClientRequiredMixin, APIView):
-    permission_classes = [IsAuthenticated]
+class ClientParkingHistoryAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsClientPermission]
     def get(self, request):
         lots = ParkingLot.objects.filter(client=request.user)
         lot_ids = lots.values_list('id', flat=True)
@@ -122,8 +117,8 @@ class ClientParkingHistoryAPIView(ClientRequiredMixin, APIView):
         return Response(ParkingTransactionSerializer(transactions.order_by('-entry_time')[:100], many=True).data)
 
 # 5. Financial Reports / Transactions
-class ClientFinancialReportsAPIView(ClientRequiredMixin, APIView):
-    permission_classes = [IsAuthenticated]
+class ClientFinancialReportsAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsClientPermission]
     def get(self, request):
         lots = ParkingLot.objects.filter(client=request.user)
         lot_ids = lots.values_list('id', flat=True)
@@ -138,8 +133,8 @@ class ClientFinancialReportsAPIView(ClientRequiredMixin, APIView):
         return Response({'revenue_by_day': revenue_by_day})
 
 # 6. Analytics & Insights
-class ClientAnalyticsAPIView(ClientRequiredMixin, APIView):
-    permission_classes = [IsAuthenticated]
+class ClientAnalyticsAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsClientPermission]
     def get(self, request):
         lots = ParkingLot.objects.filter(client=request.user)
         analytics = []
@@ -154,8 +149,8 @@ class ClientAnalyticsAPIView(ClientRequiredMixin, APIView):
         return Response({'location_performance': analytics})
 
 # 7. Staff Management
-class ClientStaffAPIView(ClientRequiredMixin, APIView):
-    permission_classes = [IsAuthenticated]
+class ClientStaffAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsClientPermission]
     def get(self, request):
         staff = User.objects.filter(role='staff', parking_lots__client=request.user).distinct()
         return Response(UserSerializer(staff, many=True).data)
@@ -168,8 +163,8 @@ class ClientStaffAPIView(ClientRequiredMixin, APIView):
             return Response(serializer.data, status=201)
         return Response(serializer.errors, status=400)
 
-class ClientStaffDetailAPIView(ClientRequiredMixin, APIView):
-    permission_classes = [IsAuthenticated]
+class ClientStaffDetailAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsClientPermission]
     def put(self, request, staff_id):
         try:
             staff = User.objects.get(id=staff_id, role='staff', parking_lots__client=request.user)
@@ -189,8 +184,8 @@ class ClientStaffDetailAPIView(ClientRequiredMixin, APIView):
         return Response(status=204)
 
 # 8. Notifications
-class ClientNotificationsAPIView(ClientRequiredMixin, APIView):
-    permission_classes = [IsAuthenticated]
+class ClientNotificationsAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsClientPermission]
     def get(self, request):
         lots = ParkingLot.objects.filter(client=request.user)
         spaces = ParkingSpace.objects.filter(parking_lot__in=lots)
@@ -198,21 +193,21 @@ class ClientNotificationsAPIView(ClientRequiredMixin, APIView):
         return Response(AlertSerializer(alerts, many=True).data)
 
 # 9. Settings
-class ClientSettingsAPIView(ClientRequiredMixin, APIView):
-    permission_classes = [IsAuthenticated]
+class ClientSettingsAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsClientPermission]
     def get(self, request):
         return Response({"message": "Client settings data"})
     def put(self, request):
         return Response({"message": "Client settings updated"})
 
 # 10. Support / Help
-class ClientSupportFAQsAPIView(ClientRequiredMixin, APIView):
-    permission_classes = [IsAuthenticated]
+class ClientSupportFAQsAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsClientPermission]
     def get(self, request):
         return Response({"message": "FAQs data"})
 
-class ClientSupportTicketsAPIView(ClientRequiredMixin, APIView):
-    permission_classes = [IsAuthenticated]
+class ClientSupportTicketsAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsClientPermission]
     def get(self, request):
         tickets = SupportTicket.objects.filter(user=request.user).order_by('-created_at')[:100]
         return Response(SupportTicketSerializer(tickets, many=True).data)
@@ -223,4 +218,4 @@ class ClientSupportTicketsAPIView(ClientRequiredMixin, APIView):
         if serializer.is_valid():
             serializer.save(user=request.user)
             return Response(serializer.data, status=201)
-        return Response(serializer.errors, status=400) 
+        return Response(serializer.errors, status=400)
