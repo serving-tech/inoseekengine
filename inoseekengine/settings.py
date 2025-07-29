@@ -53,6 +53,7 @@ ALLOWED_HOSTS = [
     "127.0.0.1:8000",
     "127.0.0.1",
     ".ngrok-free.app",
+    ".vercel.app",
 ]
 
 # Application definition
