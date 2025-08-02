@@ -459,6 +459,7 @@ class InitiatePaymentAPIView(APIView):
         amount = request.data.get("amount")
         parking_transaction_id = request.data.get("parking_transaction_id")
         phone_number = request.data.get("phone_number")
+        transaction = None  # Initialize transaction as None
 
         logger.info(f"Initiating payment for user {user.email}, transaction_id: {parking_transaction_id}")
 
@@ -556,7 +557,7 @@ class InitiatePaymentAPIView(APIView):
             payment_data = response.json()
 
             # Update local transaction or balance
-            with transaction.atomic():
+            with db_transaction.atomic():
                 if not parking_transaction_id:
                     default_lot, _ = ParkingLot.objects.get_or_create(
                         name="Top-up Lot",
@@ -575,6 +576,7 @@ class InitiatePaymentAPIView(APIView):
                             status=status.HTTP_400_BAD_REQUEST
                         )
 
+                    # Create a top-up transaction but keep transaction as None for STK Push
                     ParkingTransaction.objects.create(
                         car=car,
                         parking_space=default_space,
@@ -591,6 +593,12 @@ class InitiatePaymentAPIView(APIView):
                         transaction = ParkingTransaction.objects.select_related('car__user').get(
                             id=parking_transaction_id, car__user=user, status='ongoing'
                         )
+                        transaction.fee = amount
+                        transaction.status = 'completed'
+                        transaction.payment_status = 'PENDING'
+                        transaction.exit_time = timezone.now()
+                        transaction.duration = transaction.exit_time - transaction.entry_time
+                        transaction.save()
                     except ParkingTransaction.DoesNotExist:
                         logger.error(f"Invalid or unauthorized transaction {parking_transaction_id} for user {user.email}")
                         return Response(
@@ -598,17 +606,11 @@ class InitiatePaymentAPIView(APIView):
                             status=status.HTTP_400_BAD_REQUEST
                         )
 
-                    transaction.fee = amount
-                    transaction.status = 'completed'
-                    transaction.payment_status = 'PENDING'
-                    transaction.exit_time = timezone.now()
-                    transaction.duration = transaction.exit_time - transaction.entry_time
-                    transaction.save()
-
             return Response({
                 "status": "success",
                 "message": "Payment initiated successfully",
-                "data": payment_data
+                "data": payment_data,
+                "transaction": None  # Explicitly return None for transaction in response
             }, status=status.HTTP_201_CREATED)
 
         except requests.exceptions.RequestException as e:
@@ -623,7 +625,7 @@ class InitiatePaymentAPIView(APIView):
                 {"status": "error", "message": "An unexpected error occurred", "details": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
+        
 class PaymentStatusCallbackAPIView(APIView):
     permission_classes = [AllowAny]  # Payment service may not send auth headers
 
