@@ -27,11 +27,18 @@ class ParkingSpaceSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'parking_lot', 'is_occupied', 'created_at']
 
 class CarSerializer(serializers.ModelSerializer):
-    user = UserSerializer(read_only=True)
+    user = UserSerializer(read_only=True)  # Keep user as read-only for serialization output
+
     class Meta:
         model = Car
         fields = ['id', 'user', 'number_plate', 'make', 'model', 'is_active', 'created_at']
         read_only_fields = ['id', 'user', 'created_at']
+
+    def create(self, validated_data):
+        # Set the user from the request context
+        user = self.context['request'].user
+        validated_data['user'] = user
+        return super().create(validated_data)
 
 class ParkingTransactionSerializer(serializers.ModelSerializer):
     car = CarSerializer(read_only=True)

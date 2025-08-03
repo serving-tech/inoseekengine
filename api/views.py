@@ -22,6 +22,7 @@ from alerts.models import Alert
 from parking_lots.models import ParkingLot, ParkingSpace
 from parking_transactions.models import ParkingTransaction
 from .serializers import UserSerializer, CarSerializer, ParkingTransactionSerializer, AlertSerializer, SupportTicketSerializer
+from .models import SupportTicket
 
 # Initialize logger
 logger = logging.getLogger(__name__)
@@ -396,8 +397,7 @@ class CarListCreateAPIView(APIView):
         return Response(CarSerializer(cars, many=True).data, status=status.HTTP_200_OK)
 
     def post(self, request):
-        data = request.data
-        data['user'] = request.user.id
+        data = request.data.copy()  # Create a mutable copy of request.data
         if 'number_plate' in data:
             data['number_plate'] = data['number_plate'].upper().replace(' ', '')
             if not re.match(r'^[A-Z0-9]{1,8}$', data['number_plate']):
@@ -406,7 +406,7 @@ class CarListCreateAPIView(APIView):
                     {'status': 'error', 'message': 'Invalid number plate format. Use up to 8 alphanumeric characters'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-        serializer = CarSerializer(data=data)
+        serializer = CarSerializer(data=data, context={'request': request})  # Pass request context
         if serializer.is_valid():
             serializer.save()
             logger.info(f"Car created for user {request.user.email}: {data['number_plate']}")
@@ -459,7 +459,7 @@ class InitiatePaymentAPIView(APIView):
         amount = request.data.get("amount")
         parking_transaction_id = request.data.get("parking_transaction_id")
         phone_number = request.data.get("phone_number")
-        transaction = None  # Initialize transaction as None
+        parking_txn = None  # renamed from transaction to avoid conflict
 
         logger.info(f"Initiating payment for user {user.email}, transaction_id: {parking_transaction_id}")
 
@@ -483,14 +483,9 @@ class InitiatePaymentAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Normalize user's stored phone number
+        # Normalize stored phone
         stored_phone = user.phone_number
-        if stored_phone.startswith('0'):
-            normalized_stored_phone = '254' + stored_phone[1:]
-        else:
-            normalized_stored_phone = stored_phone
-
-        # Validate phone number match
+        normalized_stored_phone = '254' + stored_phone[1:] if stored_phone.startswith('0') else stored_phone
         if phone_number != normalized_stored_phone:
             logger.error(f"Phone number mismatch for user {user.email}: provided {phone_number}, expected {normalized_stored_phone}")
             return Response(
@@ -503,7 +498,7 @@ class InitiatePaymentAPIView(APIView):
             if amount <= 0:
                 raise ValueError("Amount must be positive")
             amount_str = f"{amount:.2f}"
-        except (ValueError, TypeError) as e:
+        except (ValueError, TypeError):
             logger.error(f"Invalid amount for user {user.email}: {amount}")
             return Response(
                 {"status": "error", "message": "Amount must be a positive number"},
@@ -517,7 +512,6 @@ class InitiatePaymentAPIView(APIView):
             else f"park-{parking_transaction_id}"
         )
 
-        # Prepare payment payload
         payload = {
             "order_id": order_id,
             "user_id": str(user.id),
@@ -528,7 +522,6 @@ class InitiatePaymentAPIView(APIView):
 
         logger.info(f"Payment payload for user {user.email}: {payload}")
 
-        # Send request to payment service
         try:
             response = requests.post(
                 f"{settings.PAYMENTS_API_URL}/api/v1/payments/process/",
@@ -556,8 +549,8 @@ class InitiatePaymentAPIView(APIView):
 
             payment_data = response.json()
 
-            # Update local transaction or balance
-            with db_transaction.atomic():
+            # Safely handle DB changes
+            with transaction.atomic():
                 if not parking_transaction_id:
                     default_lot, _ = ParkingLot.objects.get_or_create(
                         name="Top-up Lot",
@@ -576,7 +569,7 @@ class InitiatePaymentAPIView(APIView):
                             status=status.HTTP_400_BAD_REQUEST
                         )
 
-                    # Create a top-up transaction but keep transaction as None for STK Push
+                    # Record top-up
                     ParkingTransaction.objects.create(
                         car=car,
                         parking_space=default_space,
@@ -590,15 +583,15 @@ class InitiatePaymentAPIView(APIView):
                     user.save()
                 else:
                     try:
-                        transaction = ParkingTransaction.objects.select_related('car__user').get(
+                        parking_txn = ParkingTransaction.objects.select_related('car__user').get(
                             id=parking_transaction_id, car__user=user, status='ongoing'
                         )
-                        transaction.fee = amount
-                        transaction.status = 'completed'
-                        transaction.payment_status = 'PENDING'
-                        transaction.exit_time = timezone.now()
-                        transaction.duration = transaction.exit_time - transaction.entry_time
-                        transaction.save()
+                        parking_txn.fee = amount
+                        parking_txn.status = 'completed'
+                        parking_txn.payment_status = 'PENDING'
+                        parking_txn.exit_time = timezone.now()
+                        parking_txn.duration = parking_txn.exit_time - parking_txn.entry_time
+                        parking_txn.save()
                     except ParkingTransaction.DoesNotExist:
                         logger.error(f"Invalid or unauthorized transaction {parking_transaction_id} for user {user.email}")
                         return Response(
@@ -610,7 +603,7 @@ class InitiatePaymentAPIView(APIView):
                 "status": "success",
                 "message": "Payment initiated successfully",
                 "data": payment_data,
-                "transaction": None  # Explicitly return None for transaction in response
+                "transaction": None
             }, status=status.HTTP_201_CREATED)
 
         except requests.exceptions.RequestException as e:
@@ -625,7 +618,8 @@ class InitiatePaymentAPIView(APIView):
                 {"status": "error", "message": "An unexpected error occurred", "details": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        
+
+
 class PaymentStatusCallbackAPIView(APIView):
     permission_classes = [AllowAny]  # Payment service may not send auth headers
 
@@ -848,12 +842,11 @@ class SupportTicketListCreateAPIView(APIView):
         return Response(SupportTicketSerializer(tickets, many=True).data, status=status.HTTP_200_OK)
 
     def post(self, request):
-        data = request.data
-        data['user'] = request.user.id
-        serializer = SupportTicketSerializer(data=data)
+        serializer = SupportTicketSerializer(data=request.data)
         if serializer.is_valid():
-            serializer.save()
-            logger.info(f"Support ticket created for user {request.user.email}: {data.get('subject')}")
+            serializer.save(user=request.user)  # Ensure user is attached to the ticket
+            logger.info(f"Support ticket created for user {request.user.email}: "
+                        f"{serializer.validated_data.get('subject')}")
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         logger.error(f"Support ticket creation failed for user {request.user.email}: {serializer.errors}")
         return Response(
