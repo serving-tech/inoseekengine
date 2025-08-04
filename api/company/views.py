@@ -13,6 +13,8 @@ from alerts.models import Alert
 from api.serializers import AlertSerializer
 from api.models import SupportTicket
 from api.serializers import SupportTicketSerializer
+from django.shortcuts import get_object_or_404
+
 
 def is_company_admin(user):
     return getattr(user, 'role', None) == 'company_admin'
@@ -54,22 +56,42 @@ class CompanyDashboardAPIView(APIView):
 class CompanyClientsAPIView(APIView):
     permission_classes = [IsAuthenticated, IsCompanyAdmin]
     renderer_classes = [JSONRenderer]
+
     def get(self, request):
         clients = User.objects.filter(role='client')
         data = []
         for client in clients:
             lots = ParkingLot.objects.filter(client=client)
-            revenue = ParkingTransaction.objects.filter(parking_space__parking_lot__client=client).aggregate(total=Sum('fee'))['total'] or 0
+            revenue = ParkingTransaction.objects.filter(
+                parking_space__parking_lot__client=client
+            ).aggregate(total=Sum('fee'))['total'] or 0
             data.append({
-                'client': UserSerializer(client).data,
+                'client': UserSerializer(client, context={'request': request}).data,
                 'total_locations': lots.count(),
                 'revenue': revenue,
             })
-        response = Response(data)
-        response.accepted_renderer = JSONRenderer()
-        response.accepted_media_type = 'application/json'
-        response.renderer_context = {}
-        return response
+        return Response(data, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        data = request.data.copy()
+        password = data.pop('password', None)
+        data['role'] = 'client'  # enforce role in serializer
+
+        serializer = UserSerializer(data=data, context={'request': request})
+        if serializer.is_valid():
+            user = serializer.save()
+            # Ensure role is client (in case serializer overrides it)
+            user.role = 'client'
+            if password:
+                user.set_password(password)
+            user.save()
+            return Response(
+                UserSerializer(user, context={'request': request}).data,
+                status=status.HTTP_201_CREATED
+            )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
 
 class CompanyClientDetailAPIView(APIView):
     permission_classes = [IsAuthenticated]
@@ -97,35 +119,50 @@ class CompanyClientDetailAPIView(APIView):
 class CompanyLocationsAPIView(APIView):
     permission_classes = [IsAuthenticated, IsCompanyAdmin]
     renderer_classes = [JSONRenderer]
+
     def get(self, request):
-        lots = ParkingLot.objects.all()
-        response = Response(ParkingLotSerializer(lots, many=True).data)
-        response.accepted_renderer = JSONRenderer()
-        response.accepted_media_type = 'application/json'
-        response.renderer_context = {}
-        return response
+        """
+        Fetch all parking locations with nested client details
+        """
+        lots = ParkingLot.objects.select_related('client').all()
+        serializer = ParkingLotSerializer(lots, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        """
+        Create a new parking location with client_id
+        """
+        serializer = ParkingLotSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 
 class CompanyLocationDetailAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsCompanyAdmin]
     renderer_classes = [JSONRenderer]
+
+    def get_object(self, location_id):
+        return get_object_or_404(ParkingLot, pk=location_id)
+
     def get(self, request, location_id):
-        response = Response({"message": f"Location {location_id} details"})
-        response.accepted_renderer = JSONRenderer()
-        response.accepted_media_type = 'application/json'
-        response.renderer_context = {}
-        return response
+        lot = self.get_object(location_id)
+        serializer = ParkingLotSerializer(lot)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
     def put(self, request, location_id):
-        response = Response({"message": f"Location {location_id} updated"})
-        response.accepted_renderer = JSONRenderer()
-        response.accepted_media_type = 'application/json'
-        response.renderer_context = {}
-        return response
+        lot = self.get_object(location_id)
+        serializer = ParkingLotSerializer(lot, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
     def delete(self, request, location_id):
-        response = Response({"message": f"Location {location_id} deleted"})
-        response.accepted_renderer = JSONRenderer()
-        response.accepted_media_type = 'application/json'
-        response.renderer_context = {}
-        return response
+        lot = self.get_object(location_id)
+        lot.delete()
+        return Response({"message": f"Location {location_id} deleted"}, status=status.HTTP_204_NO_CONTENT)
 
 # 4. Users (Drivers)
 class CompanyUsersAPIView(APIView):
