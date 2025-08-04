@@ -12,6 +12,8 @@ from api.serializers import AlertSerializer, UserSerializer
 from django.contrib.auth import get_user_model
 from api.models import SupportTicket
 from api.serializers import SupportTicketSerializer
+from django.shortcuts import get_object_or_404
+
 
 User = get_user_model()
 
@@ -22,14 +24,22 @@ class IsClientPermission(BasePermission):
 # 1. Dashboard (Home Overview)
 class ClientDashboardAPIView(APIView):
     permission_classes = [IsAuthenticated, IsClientPermission]
+
     def get(self, request):
         location_id = request.query_params.get('location_id')
+        
+        # Filter parking lots owned by this client
         lots = ParkingLot.objects.filter(client=request.user)
         if location_id:
             lots = lots.filter(id=location_id)
+
         lot_ids = lots.values_list('id', flat=True)
+
+        # Spaces and transactions for these lots
         spaces = ParkingSpace.objects.filter(parking_lot__in=lot_ids)
         transactions = ParkingTransaction.objects.filter(parking_space__parking_lot__in=lot_ids)
+
+        # KPIs
         now_parked = spaces.filter(is_occupied=True).count()
         total_spaces = spaces.count()
         total_revenue = transactions.aggregate(total=Sum('fee'))['total'] or 0
@@ -39,8 +49,18 @@ class ClientDashboardAPIView(APIView):
             'total_spaces': total_spaces,
             'locations_active': lots.count(),
         }
-        recent_transactions = ParkingTransactionSerializer(transactions.order_by('-created_at')[:10], many=True).data
+
+        # Recent transactions (limit 10)
+        recent_transactions = ParkingTransactionSerializer(
+            transactions.order_by('-created_at')[:10],
+            many=True
+        ).data
+
+        # **NEW**: Include user details
+        user_data = UserSerializer(request.user).data
+
         return Response({
+            'user': user_data,
             'kpis': kpis,
             'recent_transactions': recent_transactions,
             'locations': ParkingLotSerializer(lots, many=True).data,
@@ -49,30 +69,40 @@ class ClientDashboardAPIView(APIView):
 # 2. Locations Management
 class ClientLocationsAPIView(APIView):
     permission_classes = [IsAuthenticated, IsClientPermission]
+
     def get(self, request):
         lots = ParkingLot.objects.filter(client=request.user)
         return Response(ParkingLotSerializer(lots, many=True).data)
+
     def post(self, request):
         data = request.data.copy()
-        data['client'] = request.user.id
+        data['client_id'] = request.user.id   # <-- ensure client_id is provided
         serializer = ParkingLotSerializer(data=data)
         if serializer.is_valid():
-            serializer.save(client=request.user)
+            serializer.save()
             return Response(serializer.data, status=201)
         return Response(serializer.errors, status=400)
 
+# Retrieve / Update / Delete Specific Location
 class ClientLocationDetailAPIView(APIView):
     permission_classes = [IsAuthenticated, IsClientPermission]
+
     def put(self, request, location_id):
-        try:
-            lot = ParkingLot.objects.get(id=location_id, client=request.user)
-        except ParkingLot.DoesNotExist:
-            return Response({'error': 'Not found'}, status=404)
-        serializer = ParkingLotSerializer(lot, data=request.data, partial=True)
+        lot = get_object_or_404(ParkingLot, id=location_id, client=request.user)
+        # Prevent client re-assignment
+        data = request.data.copy()
+        data.pop('client', None)
+
+        serializer = ParkingLotSerializer(lot, data=data, partial=True)
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data)
         return Response(serializer.errors, status=400)
+
+    def delete(self, request, location_id):
+        lot = get_object_or_404(ParkingLot, id=location_id, client=request.user)
+        lot.delete()
+        return Response({"message": "Location deleted successfully"}, status=204)
 
 # 3. Current Parking (Live Activity)
 class ClientCurrentParkingAPIView(APIView):
