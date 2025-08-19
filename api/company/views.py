@@ -389,3 +389,31 @@ class CompanySupportAPIView(APIView):
         response.accepted_media_type = 'application/json'
         response.renderer_context = {}
         return response
+
+
+
+class DriverDetailsView(APIView):
+    """
+    Returns name, email, and role of a given user_id if the role is driver.
+    """
+
+    authentication_classes = []  # add JWT later if needed
+    permission_classes = []
+
+    def get(self, request, user_id):
+        try:
+            user = User.objects.get(id=user_id, role="driver")
+
+            data = {
+                "user_id": user.id,
+                "name": user.name,
+                "email": user.email,
+                "role": user.role,
+            }
+            return Response(data, status=status.HTTP_200_OK)
+
+        except User.DoesNotExist:
+            return Response(
+                {"error": "Driver not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )        

@@ -3,7 +3,7 @@ from .views import (
     CompanyDashboardAPIView, CompanyClientsAPIView, CompanyClientDetailAPIView, CompanyLocationsAPIView, CompanyLocationDetailAPIView,
     CompanyUsersAPIView, CompanyUserDetailAPIView, CompanyStaffAPIView, CompanyStaffDetailAPIView, CompanyParkingSessionsAPIView,
     CompanyParkingHistoryAPIView, CompanyFinancialTransactionsAPIView, CompanyAnalyticsAPIView, CompanyNotificationsAPIView,
-    CompanySettingsAPIView, CompanySupportAPIView
+    CompanySettingsAPIView, CompanySupportAPIView, DriverDetailsView
 )
 
 urlpatterns = [
@@ -23,4 +23,6 @@ urlpatterns = [
     path('notifications/', CompanyNotificationsAPIView.as_view(), name='company-notifications'),
     path('settings/', CompanySettingsAPIView.as_view(), name='company-settings'),
     path('support/', CompanySupportAPIView.as_view(), name='company-support'),
+    path('user/<int:user_id>/driver/', DriverDetailsView.as_view(), name='driver-details'),
+
 ] 
